@@ -53,8 +53,7 @@ pub fn get_installed_apps(icon_size: u16) -> Result<Vec<AppInfo>> {
 /// Scans a registry key for application information.
 #[cfg(target_os = "windows")]
 fn scan_registry_key(key_path: &str, icon_size: u16) -> Result<Vec<AppInfo>> {
-    use std::mem::MaybeUninit;
-    use windows::Win32::System::Registry::{HKEY, REG_VALUE_TYPE};
+    use windows::Win32::System::Registry::HKEY;
 
     let mut apps = Vec::new();
     let mut hkey: HKEY = HKEY::default();
@@ -81,7 +80,7 @@ fn scan_registry_key(key_path: &str, icon_size: u16) -> Result<Vec<AppInfo>> {
             RegEnumKeyExW(
                 hkey,
                 index,
-                subkey_name.as_mut_ptr(),
+                &mut subkey_name,
                 &mut subkey_name_len,
                 None,
                 None,
@@ -177,7 +176,6 @@ fn read_registry_string(
     hkey: windows::Win32::System::Registry::HKEY,
     value_name: &str,
 ) -> Result<String> {
-    use std::mem::MaybeUninit;
     use windows::Win32::System::Registry::REG_VALUE_TYPE;
 
     let value_name = HSTRING::from(value_name);
