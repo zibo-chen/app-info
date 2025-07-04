@@ -2,8 +2,7 @@
 use crate::{error::AppInfoError, AppInfo, Icon, Result};
 #[cfg(target_os = "macos")]
 use objc2::{
-    class,
-    msg_send_id,
+    class, msg_send_id,
     rc::{Allocated, Id},
 };
 #[cfg(target_os = "macos")]
@@ -121,7 +120,7 @@ fn parse_app_bundle(app_path: &Path, icon_size: u16) -> Result<AppInfo> {
         path: app_path.to_path_buf(),
         icon,
         identifier,
-        publisher: None,    // Publisher info is not typically stored in Info.plist on macOS
+        publisher: None, // Publisher info is not typically stored in Info.plist on macOS
         install_date: None, // Can be obtained from the file system, but requires extra implementation
     })
 }
@@ -152,7 +151,8 @@ pub fn get_file_icon(path: &Path, size: u16) -> Result<Icon> {
 
         // Create a bitmap representation
         let bitmap_representation: Id<NSBitmapImageRep> = {
-            let allocated: Allocated<NSBitmapImageRep> = msg_send_id![class!(NSBitmapImageRep), alloc];
+            let allocated: Allocated<NSBitmapImageRep> =
+                msg_send_id![class!(NSBitmapImageRep), alloc];
             let rep: Id<NSBitmapImageRep> = msg_send_id![
                 allocated,
                 initWithBitmapDataPlanes: std::ptr::null_mut::<*mut u8>(),
@@ -201,16 +201,4 @@ pub fn get_file_icon(path: &Path, size: u16) -> Result<Icon> {
             pixels,
         })
     }
-}
-
-/// Stub for non-macOS platforms.
-#[cfg(not(target_os = "macos"))]
-pub fn get_installed_apps(_icon_size: u16) -> Result<Vec<AppInfo>> {
-    Err(AppInfoError::UnsupportedPlatform)
-}
-
-/// Stub for non-macOS platforms.
-#[cfg(not(target_os = "macos"))]
-pub fn get_file_icon(_path: &std::path::Path, _size: u16) -> Result<Icon> {
-    Err(AppInfoError::UnsupportedPlatform)
 }

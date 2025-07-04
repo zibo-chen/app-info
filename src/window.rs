@@ -6,7 +6,7 @@ use scopeguard::defer;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use windows::{
-    core::HSTRING,
+    core::{HSTRING, PWSTR},
     Win32::{
         Foundation::SIZE,
         Graphics::{
@@ -80,12 +80,12 @@ fn scan_registry_key(key_path: &str, icon_size: u16) -> Result<Vec<AppInfo>> {
             RegEnumKeyExW(
                 hkey,
                 index,
-                &mut subkey_name,
+                PWSTR(subkey_name.as_mut_ptr()),
                 &mut subkey_name_len,
-                None,
-                None,
-                None,
-                None,
+                Some(std::ptr::null()),
+                PWSTR::null(),
+                Some(std::ptr::null_mut()),
+                Some(std::ptr::null_mut()),
             )
         };
 
@@ -137,24 +137,33 @@ fn parse_registry_app(key_path: &str, icon_size: u16) -> Result<AppInfo> {
     let publisher = read_registry_string(hkey, "Publisher").ok();
     let install_location = read_registry_string(hkey, "InstallLocation").ok();
     let install_date = read_registry_string(hkey, "InstallDate").ok();
+    let display_icon_path = read_registry_string(hkey, "DisplayIcon").ok();
 
-    // Try to get the executable path
-    let exe_path = install_location
-        .as_ref()
-        .and_then(|loc| {
-            let path = PathBuf::from(loc);
-            if path.exists() {
-                // Try to find the main executable
-                find_main_executable(&path)
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| PathBuf::from(""));
+    // Determine the path for the application and its icon
+    let (app_path, icon_path) = if let Some(icon_str) = display_icon_path {
+        // DisplayIcon can be "path,index" or just "path"
+        let path_part = icon_str.split(',').next().unwrap_or("").trim();
+        let path = PathBuf::from(path_part);
+        if path.exists() {
+            (path.clone(), Some(path))
+        } else {
+            // DisplayIcon path doesn't exist, fallback to InstallLocation
+            install_location
+                .as_ref()
+                .and_then(|loc| find_main_executable(&PathBuf::from(loc)))
+                .map_or((PathBuf::new(), None), |p| (p.clone(), Some(p)))
+        }
+    } else {
+        // No DisplayIcon, search in InstallLocation
+        install_location
+            .as_ref()
+            .and_then(|loc| find_main_executable(&PathBuf::from(loc)))
+            .map_or((PathBuf::new(), None), |p| (p.clone(), Some(p)))
+    };
 
     // Get the icon
-    let icon = if icon_size > 0 && exe_path.exists() {
-        get_file_icon(&exe_path, icon_size).ok()
+    let icon = if icon_size > 0 {
+        icon_path.and_then(|path| get_file_icon(&path, icon_size).ok())
     } else {
         None
     };
@@ -162,7 +171,7 @@ fn parse_registry_app(key_path: &str, icon_size: u16) -> Result<AppInfo> {
     Ok(AppInfo {
         name: display_name,
         version,
-        path: exe_path,
+        path: app_path,
         icon,
         identifier: None, // Windows typically uses a ProductCode, simplified here
         publisher,
@@ -236,17 +245,55 @@ fn read_registry_string(
 fn find_main_executable(install_dir: &Path) -> Option<PathBuf> {
     use std::fs;
 
-    // Look for .exe files
+    if !install_dir.exists() {
+        return None;
+    }
+
+    // Look for .exe files, but avoid uninstaller files
     if let Ok(entries) = fs::read_dir(install_dir) {
+        let mut exe_files: Vec<PathBuf> = Vec::new();
+
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("exe") {
-                return Some(path);
+                exe_files.push(path);
             }
         }
-    }
 
-    None
+        // Filter out likely uninstaller executables
+        let filtered_exes: Vec<PathBuf> = exe_files
+            .into_iter()
+            .filter(|path| {
+                if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                    let name_lower = name.to_lowercase();
+                    // Skip common uninstaller patterns
+                    !name_lower.contains("unins")
+                        && !name_lower.contains("uninst")
+                        && !name_lower.contains("uninstall")
+                        && !name_lower.contains("remove")
+                        && !name_lower.starts_with("un")
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        // Return the first non-uninstaller executable, or first one if none found
+        filtered_exes.into_iter().next().or_else(|| {
+            // If all were filtered out, try to get any exe file as fallback
+            if let Ok(entries) = fs::read_dir(install_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("exe") {
+                        return Some(path);
+                    }
+                }
+            }
+            None
+        })
+    } else {
+        None
+    }
 }
 
 /// Gets the icon for a given file path on Windows.
@@ -313,6 +360,7 @@ pub fn get_file_icon(path: &Path, size: u16) -> Result<Icon> {
     let pixel_format = unsafe { wic_bitmap.GetPixelFormat() }
         .map_err(|_| AppInfoError::FileIconError(crate::error::FileIconError::Failed))?;
 
+    #[allow(non_upper_case_globals)]
     let pixels = match pixel_format {
         GUID_WICPixelFormat32bppBGRA | GUID_WICPixelFormat32bppRGBA => {
             let mut pixels = vec![0u8; size as usize * size as usize * 4];
