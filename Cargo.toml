@@ -3,6 +3,7 @@ name = "app-info"
 version = "0.1.0"
 edition = "2021"
 authors = ["ChenZibo <qw.54@163.com>"]
+description = "Get the installed apps and icons on the device"
 readme = "README.md"
 repository = "https://github.com/zibo-chen/app-info"
 documentation = "https://docs.rs/app-info"
